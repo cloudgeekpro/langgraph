@@ -102,7 +102,7 @@ from langgraph.pregel.read import PregelNode
 from langgraph.pregel.utils import get_new_channel_versions
 from langgraph.store.base import BaseStore
 from langgraph.types import All, PregelExecutableTask, StreamMode
-from langgraph.utils.config import patch_configurable
+from langgraph.utils.config import patch_checkpoint_map, patch_configurable
 
 V = TypeVar("V")
 P = ParamSpec("P")
@@ -177,6 +177,7 @@ class PregelLoop:
     checkpoint_pending_writes: List[PendingWrite]
     checkpoint_previous_versions: dict[str, Union[str, float, int]]
     prev_checkpoint_config: Optional[RunnableConfig]
+    prev_checkpoint_metadata: Optional[CheckpointMetadata]
 
     step: int
     stop: int
@@ -387,14 +388,16 @@ class PregelLoop:
                 "debug",
                 map_debug_checkpoint,
                 self.step - 1,  # printing checkpoint for previous step
-                self.checkpoint_config,
+                patch_checkpoint_map(self.checkpoint_config, self.checkpoint_metadata),
                 self.channels,
                 self.stream_keys,
                 self.checkpoint_metadata,
                 self.checkpoint,
                 self.tasks.values(),
                 self.checkpoint_pending_writes,
-                self.prev_checkpoint_config,
+                patch_checkpoint_map(
+                    self.prev_checkpoint_config, self.prev_checkpoint_metadata
+                ),
             )
 
         # if no more tasks, we're done
@@ -544,13 +547,15 @@ class PregelLoop:
         self.checkpoint = create_checkpoint(self.checkpoint, self.channels, self.step)
         # bail if no checkpointer
         if self._checkpointer_put_after_previous is not None:
+            self.prev_checkpoint_metadata = self.checkpoint_metadata
+            self.checkpoint_metadata = metadata
+
             self.prev_checkpoint_config = (
                 self.checkpoint_config
                 if CONFIG_KEY_CHECKPOINT_ID in self.checkpoint_config[CONF]
                 and self.checkpoint_config[CONF][CONFIG_KEY_CHECKPOINT_ID]
                 else None
             )
-            self.checkpoint_metadata = metadata
             self.checkpoint_config = {
                 **self.checkpoint_config,
                 CONF: {
